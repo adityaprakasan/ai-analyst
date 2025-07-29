@@ -114,9 +114,18 @@ User query: "${query}"
 Files uploaded: ${files.map(f => `${f.name} (${f.contentType})`).join(', ')}
 
 Based on the query and files, select the most appropriate tool. Consider:
-1. Does the query mention specific metrics (traffic, keywords, channels)?
+1. Does the query mention specific keywords?
+   - "traffic", "organic", "paid", "cost" → helium_analysis
+   - "keyword", "intent", "branded", "search terms" → keyword_analysis  
+   - "channel", "direct", "referral", "social", "email" → channel_analysis
 2. What type of analysis is requested?
-3. Do the files contain the required data?
+3. If no specific tool matches, use custom_analysis
+
+Examples:
+- "analyze traffic trends" → helium_analysis
+- "show keyword performance" → keyword_analysis
+- "channel breakdown" → channel_analysis
+- "create a scatter plot" → custom_analysis
 
 Respond with ONLY the tool name, nothing else.`;
 

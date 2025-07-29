@@ -1,6 +1,6 @@
 import { Tool, ToolExecutionResult } from "./schemas";
 import { CustomFiles } from "../types";
-import Sandbox from "@e2b/code-interpreter";
+import { Sandbox } from "@e2b/code-interpreter";
 
 function getAnalysisScriptTemplate(scriptName: string): string {
   return `
@@ -177,27 +177,47 @@ print(json.dumps(result))
 `;
     }
 
-    const { text, results, logs, error } = await sandbox.runCode(executionCode);
+    const execution = await sandbox.runCode(executionCode);
+    
+    console.log("Execution result:", execution);
+    console.log("Execution text:", execution.text);
+    console.log("Execution results:", execution.results);
+    console.log("Execution logs:", execution.logs);
+    console.log("Execution error:", execution.error);
 
-    if (error) {
+    if (execution.error) {
+      console.error("Sandbox execution error:", execution.error);
       return {
         toolName: tool.name,
         success: false,
-        error: String(error),
+        error: `Sandbox error: ${execution.error.name}: ${execution.error.value}`,
       };
     }
 
     // Parse results and collect artifacts
     let analysisResult;
+    
+    // Try to get the output from the last print statement
+    const output = execution.text || "";
+    
     try {
-      analysisResult = JSON.parse(text || "{}");
+      analysisResult = JSON.parse(output || "{}");
     } catch (parseError) {
       console.error("Failed to parse analysis result:", parseError);
-      console.log("Raw text output:", text);
+      console.log("Raw text output:", output);
+      
+      // Check logs for any output
+      if (execution.logs && execution.logs.stdout) {
+        console.log("Stdout logs:", execution.logs.stdout);
+      }
+      if (execution.logs && execution.logs.stderr) {
+        console.log("Stderr logs:", execution.logs.stderr);
+      }
+      
       analysisResult = { 
         success: false, 
         errors: [`Failed to parse analysis result: ${parseError}`],
-        output: text,
+        output: output,
         artifacts: []
       };
     }
@@ -240,7 +260,14 @@ print(json.dumps(result))
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    // Sandbox auto-closes after timeout
+    // Clean up sandbox
+    if (sandbox) {
+      try {
+        await sandbox.kill();
+      } catch (e) {
+        console.error("Failed to kill sandbox:", e);
+      }
+    }
   }
 }
 
