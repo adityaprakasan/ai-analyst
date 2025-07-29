@@ -5,6 +5,8 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { ToolOutput } from "./tooloutput";
 import { ToolResult } from "../lib/types";
+import { AgentThoughts } from "./agent-thoughts";
+import { AgentState } from "@/lib/agent/schemas";
 
 export function MessageComponent({ message }: { message: Message }) {
   return (
@@ -50,6 +52,14 @@ export function MessageComponent({ message }: { message: Message }) {
             {message.content}
           </Markdown>
           <ToolOutput result={message.toolInvocations as ToolResult} />
+          {message.toolInvocations?.[0] && 
+           'result' in message.toolInvocations[0] &&
+           message.toolInvocations[0].toolName === 'analyzeData' && (
+            <AgentThoughts 
+              state={message.toolInvocations[0].result as AgentState} 
+              className="mt-4"
+            />
+          )}
         </div>
       </div>
     </div>

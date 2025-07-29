@@ -1,14 +1,21 @@
-# AI Analyst by E2B
-This is an AI-powered code and data analysis tool built with Next.js and the [E2B SDK](https://e2b.dev/docs).
+# AI Analyst by E2B - Agentic Data Analysis System
+This is an advanced agentic AI-powered data analysis tool built with Next.js and the [E2B SDK](https://e2b.dev/docs). It features multi-turn reasoning, automatic tool selection, and transparent thought processes - just like ChatGPT or Claude.
 
 ![Preview](preview.png)
 
 → Try on [ai-analyst.e2b.dev](https://ai-analyst.e2b.dev/)
 
 ## Features
-- 🔸 Analyze data with Meta's Llama 3.1
-- 🔸 Upload CSV files
-- 🔸 Create interactive charts
+- 🤖 **Agentic Reasoning**: Multi-turn thought process with tool selection and error recovery
+- 🧠 **Transparent Thinking**: See the agent's reasoning process in real-time
+- 🛠️ **Smart Tool Selection**: Automatically chooses between predefined analysis scripts or custom code
+- 📊 **Predefined Analysis Scripts**:
+  - **Helium Analysis**: Traffic metrics over time (organic/paid traffic, keywords, costs)
+  - **Keyword Analysis**: Search intent classification, branded vs non-branded split
+  - **Channel Analysis**: Marketing channel performance (direct, referral, search, social, email)
+- 🔄 **Error Recovery**: Automatic retry with different approaches when errors occur
+- 🔸 Upload CSV files and get professional analysis
+- 🔸 Create interactive charts with Matplotlib
 
 **Powered by:**
 - 🔸 ✶ [E2B Sandbox](https://github.com/e2b-dev/code-interpreter)
@@ -27,6 +34,21 @@ This is an AI-powered code and data analysis tool built with Next.js and the [E2
 
 <img width="165" alt="Screenshot 2024-04-20 at 22 13 32" src="https://github.com/mishushakov/llm-scraper/assets/10400064/11e2a79f-a835-48c4-9f85-5c104ca7bb49">
 
+## How It Works
+
+The AI Analyst uses an agentic architecture similar to ChatGPT or Claude:
+
+1. **Query Analysis**: When you upload a CSV and ask for analysis, the agent first analyzes your request
+2. **Tool Selection**: Based on your query, it selects the most appropriate tool:
+   - Helium script for traffic/SEO metrics
+   - Keyword script for search term analysis
+   - Channel script for marketing channel breakdowns
+   - Custom code generation for unique requests
+3. **Execution**: Runs the selected tool in an E2B sandbox with your data
+4. **Error Handling**: If errors occur, the agent analyzes them and retries with adjustments
+5. **Results**: Returns charts, processed data, and summary statistics
+
+You can see the agent's thought process in real-time, including its reasoning, tool selection, and confidence levels.
 
 ## Get started
 

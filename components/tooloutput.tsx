@@ -2,7 +2,8 @@ import { Result } from "@e2b/code-interpreter";
 import { useState } from "react";
 import { ToolResult } from "../lib/types";
 import { RenderResult } from "./charts";
-import { AlertTriangle, ChartNoAxesCombined } from "lucide-react";
+import { AlertTriangle, ChartNoAxesCombined, FileImage, FileText } from "lucide-react";
+import { AgentState } from "@/lib/agent/schemas";
 
 export function ToolOutput({ result }: { result: ToolResult | undefined }) {
   const [viewMode, setViewMode] = useState<"static" | "interactive">(
@@ -10,7 +11,75 @@ export function ToolOutput({ result }: { result: ToolResult | undefined }) {
   );
 
   if (!result) return null;
-  const toolResult = result.find((r) => r.toolName === "runCode")?.result;
+  
+  // Check for agent analysis results
+  const agentResult = result.find((r) => 
+    r.toolName === "analyzeData" && 'result' in r
+  )?.result as AgentState;
+  if (agentResult?.finalResult) {
+    const finalResult = agentResult.finalResult;
+    
+    if (!finalResult.success) {
+      return (
+        <div className="text-red-500 border border-red-200 rounded-xl bg-red-500/10 text-sm">
+          <div className="flex items-center gap-2 pt-4 px-4">
+            <AlertTriangle className="w-4 h-4" />
+            <span className="font-semibold">Analysis Error</span>
+          </div>
+          <pre className="overflow-auto p-4">{finalResult.error}</pre>
+        </div>
+      );
+    }
+    
+    // Display artifacts from agent analysis
+    if (finalResult.artifacts && finalResult.artifacts.length > 0) {
+      return (
+        <div className="space-y-4">
+          {finalResult.artifacts.map((artifact, index) => (
+            <div key={index} className="border rounded-xl shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 p-3 bg-gray-50">
+                {artifact.type === 'chart' ? (
+                  <FileImage className="w-4 h-4 text-blue-500" />
+                ) : (
+                  <FileText className="w-4 h-4 text-green-500" />
+                )}
+                <span className="font-medium text-sm">{artifact.name}</span>
+              </div>
+              {artifact.type === 'chart' && (
+                <div className="p-4">
+                  <img 
+                    src={`data:image/png;base64,${artifact.content}`} 
+                    alt={artifact.name}
+                    className="max-w-full h-auto"
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+          {finalResult.output?.summary && (
+            <div className="border rounded-xl shadow-sm p-4">
+              <h4 className="font-medium text-sm mb-2">Analysis Summary</h4>
+              <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto">
+                {JSON.stringify(finalResult.output.summary, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      );
+    }
+    
+    // Show message if no artifacts but finalResult exists
+    return (
+      <div className="text-gray-500 border border-gray-200 rounded-xl bg-gray-50 text-sm p-4">
+        Analysis completed but no artifacts were generated. Check the agent thoughts above for details.
+      </div>
+    );
+  }
+  
+  // Original code for runCode results
+  const toolResult = result.find((r) => 
+    r.toolName === "runCode" && 'result' in r
+  )?.result;
 
   if (toolResult?.error) {
     return (
@@ -23,6 +92,8 @@ export function ToolOutput({ result }: { result: ToolResult | undefined }) {
       </div>
     );
   }
+
+  if (!toolResult?.results) return null;
 
   return toolResult.results.map((result: Result, index: number) => (
     <div key={index} className="flex flex-col border rounded-xl shadow-sm">

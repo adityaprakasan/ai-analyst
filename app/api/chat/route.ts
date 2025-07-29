@@ -1,13 +1,15 @@
-// import { z } from "zod";
-// import { Sandbox } from "@e2b/code-interpreter";
+import { z } from "zod";
 import { getModelClient, LLMModel, LLMModelConfig } from "@/lib/model";
 import { toPrompt } from "@/lib/prompt";
 import { CustomFiles } from "@/lib/types";
+import { AgentController } from "@/lib/agent/controller";
+import { AgentState } from "@/lib/agent/schemas";
 import {
   streamText,
   convertToCoreMessages,
   Message,
   LanguageModelV1,
+  tool,
 } from "ai";
 
 // Allow streaming responses up to 60 seconds
@@ -36,43 +38,49 @@ export async function POST(req: Request) {
 
   const modelClient = getModelClient(data.model, data.config);
 
-  const result = await streamText({
-    system: toPrompt(data),
-    model: modelClient as LanguageModelV1,
-    messages: convertToCoreMessages(filteredMessages),
-    ...modelParams,
-    // If the provider supports tooling, uncomment below
-    // tools: {
-    // runCode: {
-    //   description:
-    //     "Execute python code in a Jupyter notebook cell and return result",
-    //   parameters: z.object({
-    //     code: z
-    //       .string()
-    //       .describe("The python code to execute in a single cell"),
-    //   }),
-    //   execute: async ({ code }) => {
-    //     // Create a sandbox, execute LLM-generated code, and return the result
-    //     console.log("Executing code", code);
-    //     const sandbox = await Sandbox.create();
+  // Check if this is an analysis request with files
+  const lastMessage = messages[messages.length - 1];
+  const isAnalysisRequest = data.files.length > 0 && 
+    (lastMessage?.content.toLowerCase().includes('analyze') || 
+     lastMessage?.content.toLowerCase().includes('analysis') ||
+     lastMessage?.content.toLowerCase().includes('chart') ||
+     lastMessage?.content.toLowerCase().includes('plot'));
 
-    //     // Upload files
-    //     for (const file of data.files) {
-    //       await sandbox.files.write(file.name, atob(file.base64));
-    //     }
-    //     const { text, results, logs, error } = await sandbox.runCode(code);
-    //     console.log(text, results, logs, error);
+  if (isAnalysisRequest) {
+    // Use the agent controller for analysis requests
+    const sessionId = `session-${Date.now()}`;
+    const agentController = new AgentController(sessionId, data.model, data.config);
+    
+    const result = await streamText({
+      system: `You are an AI assistant that helps with data analysis. When the user asks for analysis, use the analyzeData tool to process their request.`,
+      model: modelClient as LanguageModelV1,
+      messages: convertToCoreMessages(filteredMessages),
+      ...modelParams,
+      tools: {
+        analyzeData: tool({
+          description: "Analyze CSV data using predefined scripts or custom code",
+          parameters: z.object({
+            query: z.string().describe("The analysis query from the user"),
+          }),
+          execute: async ({ query }) => {
+            const agentState = await agentController.processQuery(query, data.files);
+            return agentState;
+          },
+        }),
+      },
+      toolChoice: "required",
+    });
 
-    //     return {
-    //       text,
-    //       results,
-    //       logs,
-    //       error,
-    //     };
-    //   },
-    // },
-    // },
-  });
+    return result.toDataStreamResponse();
+  } else {
+    // Regular chat without analysis
+    const result = await streamText({
+      system: toPrompt(data),
+      model: modelClient as LanguageModelV1,
+      messages: convertToCoreMessages(filteredMessages),
+      ...modelParams,
+    });
 
-  return result.toDataStreamResponse();
+    return result.toDataStreamResponse();
+  }
 }

@@ -1,0 +1,7 @@
+Target,Target Type,Metric,Database,Summary,2024-01-01,2024-02-01,2024-03-01,2024-04-01,2024-05-01,2024-06-01,2024-07-01,2024-08-01,2024-09-01,2024-10-01,2024-11-01,2024-12-01
+example.com,root domain,Organic Traffic,us,24827,1200,1350,1400,1550,1600,1650,1700,1800,1850,1900,1950,2000
+example.com,root domain,Organic Keywords,us,56346,450,480,500,520,550,580,600,620,650,680,700,720
+example.com,root domain,Organic Traffic Cost,us,30452,2500,2800,3000,3200,3400,3600,3800,4000,4200,4400,4600,4800
+example.com,root domain,Paid Traffic,us,738,150,160,170,180,190,200,210,220,230,240,250,260
+example.com,root domain,Paid Keywords,us,978,50,55,60,65,70,75,80,85,90,95,100,105
+example.com,root domain,Paid Traffic Cost,us,958,500,550,600,650,700,750,800,850,900,950,1000,1050 
