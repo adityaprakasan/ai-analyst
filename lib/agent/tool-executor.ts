@@ -1,317 +1,371 @@
-import { Tool, ToolExecutionResult } from "./schemas";
-import { CustomFiles } from "../types";
 import { Sandbox } from "@e2b/code-interpreter";
-
-function getAnalysisScriptTemplate(scriptName: string): string {
-  return `
-# Import the ${scriptName} analysis module
-import sys
-import json
-import os
-sys.path.append('/tmp')
-
-# Create output directory
-os.makedirs('/tmp/output', exist_ok=True)
-
-# The analysis script will be written dynamically
-from ${scriptName} import run_analysis
-
-# Run the analysis
-result = run_analysis('/tmp/data.csv', '/tmp/output', config)
-print(json.dumps(result))
-`;
-}
+import { readFileSync } from "fs";
+import { join } from "path";
+import { ToolExecutionResult } from "./schemas";
+import { CustomFiles } from "../types";
 
 const ANALYSIS_SCRIPTS = {
-  helium_analysis: getAnalysisScriptTemplate('helium'),
-  keyword_analysis: getAnalysisScriptTemplate('keywords'),
-  channel_analysis: getAnalysisScriptTemplate('channels'),
-};
-
-async function getAnalysisScript(scriptName: string): Promise<string> {
-  // Read the actual analysis script
-  const fs = await import('fs/promises');
-  const path = await import('path');
-  
-  const scriptPath = path.join(process.cwd(), 'lib', 'analysis', `${scriptName}.py`);
-  
-  try {
-    const content = await fs.readFile(scriptPath, 'utf-8');
-    return content;
-  } catch (error) {
-    console.error(`Failed to load analysis script ${scriptName}:`, error);
-    throw new Error(`Analysis script ${scriptName} not found`);
-  }
-}
-
-export async function executeToolInSandbox(
-  tool: Tool,
-  query: string,
-  files: CustomFiles[],
-  config?: Record<string, unknown>
-): Promise<ToolExecutionResult> {
-  const sandboxTimeout = 10 * 60 * 1000; // 10 minutes
-  let sandbox: Sandbox | null = null;
-
-  try {
-    // Create sandbox
-    sandbox = await Sandbox.create({
-      apiKey: process.env.E2B_API_KEY,
-      timeoutMs: sandboxTimeout,
-    });
-
-    // Install required packages
-    const installCode = `
-import subprocess
+  helium_analysis: (filename: string) => `
 import sys
-
-packages = ['pandas', 'numpy', 'matplotlib', 'seaborn']
-for package in packages:
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', package])
-
-# Download Poppins font for charts
-import urllib.request
-font_url = 'https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Regular.ttf'
-urllib.request.urlretrieve(font_url, '/tmp/Poppins-Regular.ttf')
-print("Dependencies installed successfully")
-`;
-
-    await sandbox.runCode(installCode);
-
-    // Upload files
-    console.log(`Uploading ${files.length} files to sandbox`);
-    for (const file of files) {
-      console.log(`Uploading file: ${file.name}`);
-      await sandbox.files.write(`/tmp/${file.name}`, file.content);
-    }
-
-    // Prepare config
-    const configCode = `
-import json
-config = ${JSON.stringify(config || {})}
-`;
-
-    await sandbox.runCode(configCode);
-
-    // Execute the appropriate tool
-    let executionCode: string;
-
-    if (tool.name === "custom_analysis") {
-      // Generate custom code using LLM
-      executionCode = await generateCustomAnalysisCode(query, files);
-    } else {
-      // Load and prepare the analysis script
-      const scriptMap: Record<string, string> = {
-        helium_analysis: 'helium',
-        keyword_analysis: 'keywords',
-        channel_analysis: 'channels'
-      };
-      
-      const scriptName = scriptMap[tool.name];
-      if (!scriptName) {
-        throw new Error(`Unknown tool: ${tool.name}`);
-      }
-      
-      const scriptContent = await getAnalysisScript(scriptName);
-      
-      // Create the execution code that writes the script and runs it
-      executionCode = `
-import sys
-import json
 import os
-
-# Debug: List uploaded files
-print("Uploaded files:", os.listdir('/tmp'))
-
-# Create output directory
-os.makedirs('/tmp/output', exist_ok=True)
-
-# Write the analysis script
-script_content = '''${scriptContent.replace(/'/g, "\\'")}'''
-with open('/tmp/${scriptName}.py', 'w') as f:
-    f.write(script_content)
-
-# Add to path and import
-sys.path.append('/tmp')
-
-try:
-    module = __import__('${scriptName}')
-    
-    # Find the CSV file - try multiple possible names
-    possible_files = [
-        '/tmp/${files[0]?.name || 'data.csv'}',
-        '/tmp/data.csv'
-    ]
-    
-    # Also check for any CSV files in /tmp
-    import glob
-    csv_files = glob.glob('/tmp/*.csv')
-    possible_files.extend(csv_files)
-    
-    data_file = None
-    for file_path in possible_files:
-        if os.path.exists(file_path):
-            data_file = file_path
-            break
-    
-    print(f"Using data file: {data_file}")
-    
-    if not data_file:
-        print("Error: No CSV data file found")
-        print("Available files:", os.listdir('/tmp'))
-        result = {"success": False, "errors": ["No CSV data file found"], "artifacts": []}
-    else:
-        # Run the analysis
-        print("Running analysis...")
-        result = module.run_analysis(data_file, '/tmp/output', config)
-        print("Analysis completed")
-        print("Result:", result)
-        
-except Exception as e:
-    print(f"Error during execution: {str(e)}")
-    import traceback
-    traceback.print_exc()
-    result = {"success": False, "errors": [f"Execution error: {str(e)}"], "artifacts": []}
-
-print(json.dumps(result))
-`;
-    }
-
-    const execution = await sandbox.runCode(executionCode);
-    
-    console.log("Execution result:", execution);
-    console.log("Execution text:", execution.text);
-    console.log("Execution results:", execution.results);
-    console.log("Execution logs:", execution.logs);
-    console.log("Execution error:", execution.error);
-
-    if (execution.error) {
-      console.error("Sandbox execution error:", execution.error);
-      return {
-        toolName: tool.name,
-        success: false,
-        error: `Sandbox error: ${execution.error.name}: ${execution.error.value}`,
-      };
-    }
-
-    // Parse results and collect artifacts
-    let analysisResult;
-    
-    // Try to get the output from the last print statement
-    const output = execution.text || "";
-    
-    try {
-      analysisResult = JSON.parse(output || "{}");
-    } catch (parseError) {
-      console.error("Failed to parse analysis result:", parseError);
-      console.log("Raw text output:", output);
-      
-      // Check logs for any output
-      if (execution.logs && execution.logs.stdout) {
-        console.log("Stdout logs:", execution.logs.stdout);
-      }
-      if (execution.logs && execution.logs.stderr) {
-        console.log("Stderr logs:", execution.logs.stderr);
-      }
-      
-      analysisResult = { 
-        success: false, 
-        errors: [`Failed to parse analysis result: ${parseError}`],
-        output: output,
-        artifacts: []
-      };
-    }
-
-    // Download artifacts
-    const artifacts = [];
-    console.log("Analysis result:", analysisResult);
-    
-    if (analysisResult.artifacts) {
-      console.log(`Found ${analysisResult.artifacts.length} artifacts to download`);
-      for (const artifact of analysisResult.artifacts) {
-        try {
-          console.log(`Reading artifact: ${artifact.name} from ${artifact.path}`);
-          const content = await sandbox.files.read(artifact.path);
-          artifacts.push({
-            name: artifact.name,
-            type: artifact.type,
-            content: typeof content === 'string' ? content : Buffer.from(content).toString('base64'),
-          });
-          console.log(`Successfully read artifact: ${artifact.name}`);
-        } catch (e) {
-          console.error(`Failed to read artifact ${artifact.name}:`, e);
-        }
-      }
-    } else {
-      console.log("No artifacts found in analysis result");
-    }
-
-    return {
-      toolName: tool.name,
-      success: true,
-      output: analysisResult,
-      artifacts,
-    };
-
-  } catch (error) {
-    return {
-      toolName: tool.name,
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    // Clean up sandbox
-    if (sandbox) {
-      try {
-        await sandbox.kill();
-      } catch (e) {
-        console.error("Failed to kill sandbox:", e);
-      }
-    }
-  }
-}
-
-async function generateCustomAnalysisCode(query: string, files: CustomFiles[]): Promise<string> {
-  // This would use the LLM to generate custom analysis code
-  // For now, returning a template
-  return `
 import pandas as pd
 import matplotlib.pyplot as plt
 import json
-import os
+import glob
+from datetime import datetime
+import base64
+from io import BytesIO
+import warnings
+warnings.filterwarnings('ignore')
 
-# Create output directory
+# Ensure output directory exists
 os.makedirs('/tmp/output', exist_ok=True)
 
-# Load data
-df = pd.read_csv('/tmp/${files[0]?.name || 'data.csv'}')
+try:
+    # Find the data file
+    csv_files = glob.glob('/tmp/*.csv')
+    if not csv_files:
+        result = {
+            "success": False,
+            "error": "No CSV files found",
+            "artifacts": []
+        }
+        print(json.dumps(result))
+        sys.exit(0)
+    
+    data_file = csv_files[0]  # Use the first CSV file found
+    
+    # Load the helium analysis script
+    exec(open('/tmp/helium_analysis.py').read())
+    
+except Exception as e:
+    result = {
+        "success": False,
+        "error": f"Script execution failed: {str(e)}",
+        "artifacts": []
+    }
+    print(json.dumps(result))
+`,
+  
+  keyword_analysis: (filename: string) => `
+import sys
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import json
+import glob
+from datetime import datetime
+import base64
+from io import BytesIO
+import warnings
+warnings.filterwarnings('ignore')
 
-# Perform custom analysis based on query: "${query}"
-# This is where LLM-generated code would go
+# Ensure output directory exists
+os.makedirs('/tmp/output', exist_ok=True)
 
-# Create a simple visualization
+try:
+    # Find the data file
+    csv_files = glob.glob('/tmp/*.csv')
+    if not csv_files:
+        result = {
+            "success": False,
+            "error": "No CSV files found",
+            "artifacts": []
+        }
+        print(json.dumps(result))
+        sys.exit(0)
+    
+    data_file = csv_files[0]  # Use the first CSV file found
+    
+    # Load the keyword analysis script
+    exec(open('/tmp/keyword_analysis.py').read())
+    
+except Exception as e:
+    result = {
+        "success": False,
+        "error": f"Script execution failed: {str(e)}",
+        "artifacts": []
+    }
+    print(json.dumps(result))
+`,
+  
+  channel_analysis: (filename: string) => `
+import sys
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import json
+import glob
+from datetime import datetime
+import base64
+from io import BytesIO
+import warnings
+warnings.filterwarnings('ignore')
+
+# Ensure output directory exists
+os.makedirs('/tmp/output', exist_ok=True)
+
+try:
+    # Find the data file
+    csv_files = glob.glob('/tmp/*.csv')
+    if not csv_files:
+        result = {
+            "success": False,
+            "error": "No CSV files found",
+            "artifacts": []
+        }
+        print(json.dumps(result))
+        sys.exit(0)
+    
+    data_file = csv_files[0]  # Use the first CSV file found
+    
+    # Load the channel analysis script
+    exec(open('/tmp/channel_analysis.py').read())
+    
+except Exception as e:
+    result = {
+        "success": False,
+        "error": f"Script execution failed: {str(e)}",
+        "artifacts": []
+    }
+    print(json.dumps(result))
+`,
+
+  custom_analysis: (filename: string) => `
+import pandas as pd
+import matplotlib.pyplot as plt
+import json
+import base64
+from io import BytesIO
+import glob
+import os
+
+# Find the CSV file
+csv_files = glob.glob('/tmp/*.csv')
+if not csv_files:
+    result = {
+        "success": False,
+        "error": "No CSV files found",
+        "artifacts": []
+    }
+    print(json.dumps(result))
+    exit()
+
+data_file = csv_files[0]
+print(f"Using data file: {data_file}")
+
+# Load and analyze the CSV file
+df = pd.read_csv(data_file)
+
+# Basic analysis
+summary = {
+    "rows": int(df.shape[0]),
+    "columns": int(df.shape[1]),
+    "column_names": df.columns.tolist(),
+    "dtypes": {col: str(dtype) for col, dtype in df.dtypes.to_dict().items()},
+    "missing_values": {col: int(val) for col, val in df.isnull().sum().to_dict().items()},
+    "numeric_summary": df.describe().to_dict() if len(df.select_dtypes(include='number').columns) > 0 else {}
+}
+
+# Create a simple chart
 plt.figure(figsize=(10, 6))
-if len(df.columns) > 0:
-    plt.plot(df.index, df.iloc[:, 0])
-plt.title('Custom Analysis Result')
-plt.savefig('/tmp/output/custom_chart.png')
+if len(df.columns) >= 2:
+    if df.dtypes.iloc[0] in ['int64', 'float64'] and df.dtypes.iloc[1] in ['int64', 'float64']:
+        plt.scatter(df.iloc[:, 0], df.iloc[:, 1])
+        plt.xlabel(df.columns[0])
+        plt.ylabel(df.columns[1])
+        plt.title(f"{df.columns[0]} vs {df.columns[1]}")
+    else:
+        df.hist(bins=20, figsize=(15, 10))
+        plt.suptitle("Data Distribution")
+else:
+    df.plot(kind='bar')
+    plt.title("Data Overview")
+
+plt.tight_layout()
+
+# Save chart as base64
+buffer = BytesIO()
+plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight')
+buffer.seek(0)
+chart_base64 = base64.b64encode(buffer.getvalue()).decode()
 plt.close()
 
 # Return results
 result = {
     "success": True,
-    "summary": {
-        "rows": len(df),
-        "columns": len(df.columns),
-        "query": "${query}"
-    },
-    "artifacts": [{
-        "name": "custom_chart.png",
-        "type": "chart",
-        "path": "/tmp/output/custom_chart.png"
-    }]
+    "summary": summary,
+    "artifacts": [
+        {
+            "name": "analysis_chart.png",
+            "type": "chart",
+            "content": chart_base64
+        }
+    ]
 }
 
 print(json.dumps(result))
-`;
+`
+};
+
+function getAnalysisScript(scriptName: keyof typeof ANALYSIS_SCRIPTS): string {
+  const scriptPath = join(process.cwd(), "lib", "analysis", `${scriptName}.py`);
+  try {
+    return readFileSync(scriptPath, "utf-8");
+  } catch (error) {
+    console.warn(`Could not read ${scriptName}.py, using fallback`);
+    return "";
+  }
+}
+
+export async function executeToolInSandbox(
+  toolName: string,
+  files: CustomFiles[]
+): Promise<ToolExecutionResult> {
+  let sandbox: Sandbox | null = null;
+  
+  try {
+    console.log(`Uploading ${files.length} files to sandbox`);
+    
+    // Create E2B sandbox
+    sandbox = await Sandbox.create({
+      metadata: { toolName },
+    });
+
+    // Upload files to sandbox
+    for (const file of files) {
+      console.log(`Uploading file: ${file.name}`);
+      // CustomFiles.content is a base64 string, need to convert to ArrayBuffer
+      const buffer = Buffer.from(file.content, 'base64');
+      await sandbox.files.write(`/tmp/${file.name}`, buffer.buffer);
+    }
+
+    // Get the appropriate analysis script
+    const scriptTemplate = ANALYSIS_SCRIPTS[toolName as keyof typeof ANALYSIS_SCRIPTS];
+    if (!scriptTemplate) {
+      return {
+        toolName,
+        success: false,
+        error: `Unknown tool: ${toolName}`,
+        artifacts: []
+      };
+    }
+
+    // Upload the analysis script to sandbox
+    const scriptContent = getAnalysisScript(toolName as keyof typeof ANALYSIS_SCRIPTS);
+    if (scriptContent) {
+      await sandbox.files.write(`/tmp/${toolName}.py`, scriptContent);
+    }
+
+    // Execute the script
+    const executionCode = scriptTemplate(files[0]?.name || "data.csv");
+    console.log("Executing analysis script...");
+    
+    const execution = await sandbox.runCode(executionCode);
+    console.log("Execution completed");
+
+    // Parse the JSON result from Python output
+    let analysisResult: any = {};
+    try {
+      // The JSON output is in logs.stdout, which is an array of strings
+      const stdout = execution.logs?.stdout;
+      if (stdout && Array.isArray(stdout)) {
+        console.log("Parsing stdout:", stdout);
+        console.log("Stdout length:", stdout.length);
+        
+        // The stdout array contains the JSON as a single element
+        // Let's check each element
+        for (let i = 0; i < stdout.length; i++) {
+          console.log(`Stdout[${i}]:`, stdout[i]);
+          const line = stdout[i].trim();
+          if (line && line.startsWith('{') && line.includes('"success"')) {
+            console.log("Found JSON at index", i, ":", line);
+            try {
+              analysisResult = JSON.parse(line);
+              console.log("Successfully parsed JSON:", analysisResult);
+              break;
+            } catch (parseErr) {
+              console.error("Failed to parse line:", parseErr);
+            }
+          }
+        }
+      } else {
+        console.log("No stdout found in logs or stdout is not an array");
+        console.log("Type of stdout:", typeof stdout);
+        console.log("Stdout value:", stdout);
+      }
+    } catch (error) {
+      console.error("Failed to parse analysis result:", error);
+      console.log("Raw stdout:", execution.logs?.stdout);
+    }
+
+    console.log("Analysis result:", analysisResult);
+
+    // Prepare the final result
+    const result: ToolExecutionResult = {
+      toolName,
+      success: analysisResult.success || false,
+      output: analysisResult,
+      artifacts: []
+    };
+    
+    // Ensure artifacts array exists
+    if (!result.artifacts) {
+      result.artifacts = [];
+    }
+
+    // Handle artifacts from the analysis result
+    if (analysisResult.artifacts && Array.isArray(analysisResult.artifacts)) {
+      console.log("Processing artifacts from analysis result:", analysisResult.artifacts);
+      
+      for (const artifact of analysisResult.artifacts) {
+        if (artifact.path) {
+          // Read the artifact from the sandbox
+          try {
+            console.log(`Reading artifact from path: ${artifact.path}`);
+            const content = await sandbox.files.read(artifact.path);
+            result.artifacts.push({
+              name: artifact.name,
+              type: artifact.type as "chart" | "csv" | "json" | "text",
+              content: Buffer.isBuffer(content) ? content.toString('base64') : content
+            });
+            console.log(`Successfully read artifact: ${artifact.name}`);
+          } catch (err) {
+            console.error(`Failed to read artifact ${artifact.path}:`, err);
+          }
+        } else if (artifact.content) {
+          // Artifact already has content (base64 encoded)
+          result.artifacts.push({
+            name: artifact.name,
+            type: artifact.type as "chart" | "csv" | "json" | "text",
+            content: artifact.content
+          });
+          console.log(`Added artifact with embedded content: ${artifact.name}`);
+        }
+      }
+    }
+
+    if (analysisResult.error) {
+      result.error = analysisResult.error;
+    }
+
+    return result;
+
+  } catch (error) {
+    console.error("Tool execution error:", error);
+    return {
+      toolName,
+      success: false,
+      error: String(error),
+      artifacts: []
+    };
+  } finally {
+    if (sandbox) {
+      try {
+        await sandbox.kill();
+      } catch (error) {
+        console.warn("Failed to cleanup sandbox:", error);
+      }
+    }
+  }
 } 

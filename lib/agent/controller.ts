@@ -113,19 +113,20 @@ ${AVAILABLE_TOOLS.map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
 User query: "${query}"
 Files uploaded: ${files.map(f => `${f.name} (${f.contentType})`).join(', ')}
 
-Based on the query and files, select the most appropriate tool. Consider:
-1. Does the query mention specific keywords?
-   - "traffic", "organic", "paid", "cost" → helium_analysis
-   - "keyword", "intent", "branded", "search terms" → keyword_analysis  
-   - "channel", "direct", "referral", "social", "email" → channel_analysis
-2. What type of analysis is requested?
-3. If no specific tool matches, use custom_analysis
+Based on the query and files, select the most appropriate tool. Look for these keywords:
 
-Examples:
-- "analyze traffic trends" → helium_analysis
-- "show keyword performance" → keyword_analysis
-- "channel breakdown" → channel_analysis
-- "create a scatter plot" → custom_analysis
+For helium_analysis (traffic analysis):
+- traffic, organic, paid, cost, spend, CPC, CTR, impressions, clicks
+
+For keyword_analysis (keyword performance):
+- keyword, search term, query, intent, branded, non-branded, performance
+
+For channel_analysis (channel breakdown):
+- channel, source, medium, direct, referral, social, email, campaign
+
+If none of these specific patterns match, use custom_analysis.
+
+Important: Focus on the main topic of the query. If the user mentions "keyword" in any form, use keyword_analysis.
 
 Respond with ONLY the tool name, nothing else.`;
 
@@ -164,7 +165,7 @@ Respond with ONLY the tool name, nothing else.`;
       // Import the tool executor dynamically to avoid circular dependencies
       const { executeToolInSandbox } = await import("./tool-executor");
       
-      const result = await executeToolInSandbox(tool, query, files);
+      const result = await executeToolInSandbox(tool.name, files);
       
       console.log("Tool execution result:", result);
       
